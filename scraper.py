@@ -8,7 +8,7 @@ import urllib
 
 def runItAll(begin, end, filename_main, filename_detail, images = False, save_merged = True):
     #scrape the main table on ecstasydata.org
-    tableRead = table.scrape(begin,end,filename_main)
+    tableRead = table(begin, end).scrape(filename_main)
     tableData = pd.read_csv(filename_main +'.csv', encoding = 'latin1').drop_duplicates()
     print("Finished downloading main table")
     #scrape corresponding details
@@ -38,13 +38,18 @@ def runItAll(begin, end, filename_main, filename_detail, images = False, save_me
 
 
 class table():
-# scrape each page from begin to end and save as csv with name 'filename'
-    def scrape(begin, end, filename):
+    def __init__(self, begin, end):
+        self.begin = begin
+        self.end = end
+
+    # scrape each page from begin to end and save as csv with name 'filename'
+    def scrape(self, filename):
         outData = pd.DataFrame()
-        linkList = table.makeLinkList(begin, end, 100)
+        linkList = self.makeLinkList(self.begin, self.end, 100)
 
         for i in range(0,len(linkList)):
-            outData = outData.append(table.scrapeSinglePage(linkList[i]))
+            outData = outData.append(self.scrapeSinglePage(linkList[i]))
+            # delay
             time.sleep(10 + random.uniform(-3,3))
             print("finished with run", i + 1 , "of", len(linkList))
         outData.to_csv(filename + '.csv', index = False)
@@ -53,24 +58,17 @@ class table():
 
 
 # make a list of links for scraping - can be used to build on an existing list
-    def makeLinkList(begin, end, viewsPrPage):
+    def makeLinkList(self, viewsPrPage):
         linklist = []
-        startLink = 'https://www.ecstasydata.org/index.php?sort=DatePublishedU+desc&start='
-        stopLink = '&search_field=-&m1=-1&m2=-1&datefield=tested&max='
-        resLink = '&field_test=1'
-
         start = 0
-        stop = viewsPrPage
 
-        for i in range(begin,end):
-            linki = startLink + str(start) + stopLink + str(stop) + resLink
-            linklist.append(linki)
-
+        for i in range(self.begin, self.end):
+            linklist.append('https://www.ecstasydata.org/index.php?sort=DatePublishedU+desc&start={}&search_field=-&m1=-1&m2=-1&datefield=tested&max={}&field_test=1'.format(start, viewsPrPage))
             start = start + viewsPrPage
-        #    stop = stop + viewsPrPage
+
         return linklist
 
-# get a page and process it with soupToData
+    # get a page and process it with soupToData
     def scrapeSinglePage(link):
         resp = requests.get(link).text
         soup = BeautifulSoup(resp, 'html.parser')
@@ -79,8 +77,8 @@ class table():
         return table.soupToData(MainResults)
 
 
-# take the soup from scrapeSinglePage and convert it to a pandas dataframe
-# this could be reworked with some loops
+    # take the soup from scrapeSinglePage and convert it to a pandas dataframe
+    # this could be reworked with some loops
     def soupToData(mainResult):
         #variable lists
         output = []
@@ -89,64 +87,52 @@ class table():
 
         for row in mainResult.find_all('tr'):
             cells = row.find_all('td')
+            outRow = {'img': [], 'smN_txt': [], 'smN_href': [], 'subst': [], 'amt': [], 'dateP':[], 'dateT': [],'loc': [], 'ss': [], 's': []}
 
             #get image, replace 'sm' with 'lg'
             try:
-                img = prefix + cells[0].find('img').get('src').replace('sm','lg')
+                outRow['img'].append(prefix + cells[0].find('img').get('src').replace('sm','lg'))
             except:
-                img = None
+                outRow['img'] = None
+
             #sample name
             try:
-                smN_txt = cells[1].find('a').contents[0]
-                smN_href = prefix + '/' + cells[1].find('a').get('href')
+                outRow['smN_txt'].append(cells[1].find('a').contents[0])
+                outRow['smN_href'].append( '/'.join([prefix, cells[1].find('a').get('href')]))
+            except:
+                outRow['smN_txt'] = None
+                outRow['smN_href'] = None
 
-            except:
-                smN_txt = None
-                smN_href = None
             #substance - requires some work to remove li tags
-            try:
-                subst_raw = cells[2].find_all('li')
-                subst = []
-                for i in subst_raw:
-                    subst.append(i.get_text())
-            except:
-                subst = None
-            #amounts
-            try:
-                amt_raw = cells[3].find_all('li')
-                amt = []
-                for i in amt_raw:
-                    amt.append(i.get_text())
-            except:
-                amt = None
-            # dates
-            try:
-                dateP = cells[4].contents[0]
-            except:
-                dateP = None
-            try:
-                dateT = cells[5].contents[0]
-            except:
-                dateT = None
-            # location
-            try:
-                loc = cells[6].contents[0]
-            except:
-                loc = None
-            # samplesize
-            try:
-                ss = cells[7].contents[0]
-            except:
-                ss = None
+            for k, v in {'subst': 2, 'amt': 3}.items():
+                try:
+                    raw = cells[v].find_all('li')
+                    for i in raw:
+                        outRow[k].append(i.get_text())
+                except:
+                    outRow[k] = None
+
+            for k, v in {'dateP': 4, 'dateT': 5, 'loc': 6, 'ss': 7}
+                try:
+                    outRow[k].append(cells[v].contents[0])
+                except:
+                    outRow[k] = None
+
             #dataSource
             try:
-                s = cells[8].find('a').contents[0]
+                outRow['s'].append(cells[8].find('a').contents[0])
             except:
-                s = None
-            output.append([img, smN_txt, smN_href, subst, amt, dateP, dateT, loc, ss, s])
+                outRow['s'] = None
+
+            R = []
+            for key in outRow:
+                R.append(outRow[key])
+
+            output.append(R)
         output = pd.DataFrame(output)
         output.columns = ['imageLink', 'sampleName', 'sampleLink', 'substances', 'amounts', 'datePublished', 'dateTested','location', 'sampleSize', 'dataSource' ]
         return output
+
 
 
 class images():
